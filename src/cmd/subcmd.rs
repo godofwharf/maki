@@ -19,7 +19,8 @@ use maki_providers::{copilot_auth, openai_auth, plugin, xai_auth};
 use maki_storage::StateDir;
 use maki_storage::auth::ProviderCredentials;
 use maki_storage::auth::{
-    delete_provider_credentials, load_provider_credentials, load_tokens, save_provider_credentials,
+    delete_provider_credentials, load_plugin_auth, load_provider_credentials, load_tokens,
+    save_provider_credentials,
 };
 use maki_storage::model::persist_model;
 
@@ -27,6 +28,9 @@ use crate::provider_scripts;
 
 const PROTOCOL_CHOICES: &str = "openai, openai-responses, anthropic or google";
 const PROVIDERS_TOML_DOCS: &str = "https://maki.sh/docs/providers/";
+const CONFIGURED: &str = "\x1b[32m✓\x1b[0m";
+const FROM_ENV: &str = "\x1b[33m~\x1b[0m";
+const UNCONFIGURED: &str = " ";
 
 pub fn auth_login(provider: Option<&str>, storage: &StateDir) -> Result<()> {
     match provider {
@@ -60,7 +64,10 @@ fn login_provider(slug: &str, storage: &StateDir) -> Result<()> {
         }
     }
 
-    if builtin.is_none() && plugin::auth_providers().iter().any(|(s, _)| s == slug) {
+    // A `login` hook is the plugin's own flow and wins over asking for a key.
+    // A plugin with neither has no way in, which `plugin::login` reports.
+    let hooked = plugin::auth_providers().iter().any(|(s, _)| s == slug);
+    if hooked || (builtin.is_none() && plugin::is_registered(slug)) {
         plugin::login(slug)?;
         return Ok(());
     }
@@ -167,58 +174,54 @@ fn known_outside_catalog(slug: &str, catalog_slugs: &[String]) -> bool {
     !catalog_slugs.is_empty() && !catalog_slugs.iter().any(|known| known == slug)
 }
 
+/// One row of the `maki auth login` menu and what picking it runs.
+enum LoginChoice {
+    Provider(String),
+    Catalog(ProviderData),
+}
+
 fn login_interactive(storage: &StateDir) -> Result<()> {
-    let builtins = all_builtins();
     let config = ProvidersConfig::load();
-    let custom_slugs: Vec<&String> = config
-        .providers
-        .keys()
-        .filter(|s| builtin_provider(s).is_none() && *s != "opencode")
-        .collect();
+    let mut rows: Vec<(&str, String, String, LoginChoice)> = Vec::new();
+
+    let saved = |slug: &str| load_provider_credentials(storage, slug).is_some();
+    let mark = |configured: bool| if configured { CONFIGURED } else { UNCONFIGURED };
+
+    for b in all_builtins() {
+        let status = if saved(b.slug) {
+            CONFIGURED
+        } else if env::var(b.default_api_key_env).is_ok() {
+            FROM_ENV
+        } else {
+            UNCONFIGURED
+        };
+        let choice = LoginChoice::Provider(b.slug.to_owned());
+        rows.push((status, b.slug.to_owned(), b.display_name.to_owned(), choice));
+    }
+    for (slug, display) in hooked_login_providers() {
+        let status = mark(load_plugin_auth(storage, &slug).is_some());
+        rows.push((status, slug.clone(), display, LoginChoice::Provider(slug)));
+    }
+    let custom = config.providers.iter().filter(|(slug, _)| {
+        builtin_provider(slug).is_none() && !plugin::is_registered(slug) && *slug != "opencode"
+    });
+    for (slug, def) in custom {
+        let display = def.display_name.clone().unwrap_or_else(|| slug.clone());
+        let choice = LoginChoice::Provider(slug.clone());
+        rows.push((mark(saved(slug)), slug.clone(), display, choice));
+    }
+    for cat in catalog_providers() {
+        let (slug, display) = (cat.slug.clone(), cat.display_name.clone());
+        rows.push((mark(saved(&slug)), slug, display, LoginChoice::Catalog(cat)));
+    }
 
     println!();
     println!("  Available providers:");
     println!();
-    for (i, b) in builtins.iter().enumerate() {
-        let status = if load_provider_credentials(storage, b.slug).is_some() {
-            "\x1b[32m✓\x1b[0m"
-        } else if env::var(b.default_api_key_env).is_ok() {
-            "\x1b[33m~\x1b[0m"
-        } else {
-            " "
-        };
-        println!("  {} {}. {:<14} {}", status, i + 1, b.slug, b.display_name);
+    for (i, (status, slug, display, _)) in rows.iter().enumerate() {
+        println!("  {} {}. {:<14} {}", status, i + 1, slug, display);
     }
-    let mut idx = builtins.len();
-    for slug in &custom_slugs {
-        idx += 1;
-        let status = if load_provider_credentials(storage, slug).is_some() {
-            "\x1b[32m✓\x1b[0m"
-        } else {
-            " "
-        };
-        let display = config
-            .get(slug)
-            .and_then(|d| d.display_name.as_deref())
-            .unwrap_or(slug);
-        println!("  {} {}. {:<14} {}", status, idx, slug, display);
-    }
-
-    let catalog_entries = catalog_providers();
-    for cat in &catalog_entries {
-        idx += 1;
-        let status = if load_provider_credentials(storage, &cat.slug).is_some() {
-            "\x1b[32m✓\x1b[0m"
-        } else {
-            " "
-        };
-        println!(
-            "  {} {}. {:<14} {}",
-            status, idx, cat.slug, cat.display_name
-        );
-    }
-    idx += 1;
-    let custom_idx = idx;
+    let custom_idx = rows.len() + 1;
     println!("    {}. Custom provider...", custom_idx);
     println!();
 
@@ -228,24 +231,28 @@ fn login_interactive(storage: &StateDir) -> Result<()> {
     io::stdin().read_line(&mut input)?;
     let choice: usize = input.trim().parse().context("enter a number")?;
 
-    if choice == 0 || choice > custom_idx {
-        bail!("invalid selection");
-    }
-
     if choice == custom_idx {
-        login_custom(storage)?;
-    } else if choice <= builtins.len() {
-        let slug = builtins[choice - 1].slug;
-        login_provider(slug, storage)?;
-    } else if choice <= builtins.len() + custom_slugs.len() {
-        let slug = custom_slugs[choice - builtins.len() - 1];
-        login_provider(slug, storage)?;
-    } else {
-        let provider = &catalog_entries[choice - builtins.len() - custom_slugs.len() - 1];
-        login_catalog_provider(provider, storage)?;
+        return login_custom(storage);
     }
+    let Some((_, _, _, picked)) = choice.checked_sub(1).and_then(|i| rows.into_iter().nth(i))
+    else {
+        bail!("invalid selection");
+    };
+    match picked {
+        LoginChoice::Provider(slug) => login_provider(&slug, storage),
+        LoginChoice::Catalog(provider) => login_catalog_provider(&provider, storage),
+    }
+}
 
-    Ok(())
+/// Plugin providers that log in through their own `login` hook and declare
+/// no key, so no login row lists them.
+fn hooked_login_providers() -> Vec<(String, String)> {
+    let mut hooked: Vec<_> = plugin::auth_providers()
+        .into_iter()
+        .filter(|(slug, _)| builtin_provider(slug).is_none())
+        .collect();
+    hooked.sort();
+    hooked
 }
 
 fn login_catalog_provider(provider: &ProviderData, storage: &StateDir) -> Result<()> {
@@ -508,9 +515,18 @@ pub fn auth_status(storage: &StateDir) -> Result<()> {
         }
     }
 
+    for (slug, display) in hooked_login_providers() {
+        if load_plugin_auth(storage, &slug).is_some() {
+            println!("  {CONFIGURED} {slug:<14} {display} (plugin login)");
+        } else {
+            println!("  \x1b[31m✗\x1b[0m {slug:<14} {display} (run: maki auth login {slug})");
+        }
+    }
+
     for (slug, def) in &config.providers {
         // 'opencode' could show up here, when the user configured free models on that provider.
         if builtin_provider(slug).is_some()
+            || plugin::is_registered(slug)
             || (slug == "opencode" && def.enable_free_models.is_some())
         {
             continue;

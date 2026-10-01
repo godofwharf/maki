@@ -1,7 +1,5 @@
 -- Regolo, as a declaration plus the catalogue and the usage report the openai
--- codec cannot fetch. The slug is one maki ships, so claiming it inherits the
--- display name, the key env var and the curated model table. Restating any of
--- those here is a registration error rather than an override.
+-- codec cannot fetch.
 
 local parse = require("maki.provider_parse")
 
@@ -237,7 +235,48 @@ end
 
 maki.provider.register({
   slug = "regolo",
+  display_name = "Regolo",
   codec = "openai",
+  base_url = "https://api.regolo.ai/v1",
+  api_key_env = "REGOLO_API_KEY",
+  login_url = "https://dashboard.regolo.ai",
+  default_model = "qwen3-coder-next",
+  family = "generic",
+  max_output_tokens = 120000,
+  context_window = 120000,
+  aperture = { path_prefix = "/v1" },
+  docs = {
+    features = "EU-hosted open-weight models with tool calling. The catalogue and prices are listed live from the API",
+  },
+  -- Tier defaults only: the full catalogue comes live from `list_models`.
+  -- Context windows mirror the group's `max_input_tokens`, the field `join`
+  -- prefers, not its `max_tokens` (input plus output), which would let a
+  -- session grow past what the upstream accepts.
+  models = {
+    {
+      prefixes = { "qwen3.5-122b" },
+      tier = "strong",
+      default = true,
+      supports_vision = true,
+      pricing = { input = 1.0, output = 4.2, cache_write = 0.0, cache_read = 0.0 },
+    },
+    {
+      prefixes = { "qwen3-coder-next" },
+      tier = "medium",
+      default = true,
+      supports_vision = false,
+      pricing = { input = 0.5, output = 2.0, cache_write = 0.0, cache_read = 0.0 },
+    },
+    {
+      prefixes = { "qwen3.5-9b" },
+      tier = "weak",
+      default = true,
+      supports_vision = false,
+      max_output_tokens = 80000,
+      context_window = 80000,
+      pricing = { input = 0.07, output = 0.35, cache_write = 0.0, cache_read = 0.0 },
+    },
+  },
   openai = {
     max_tokens_field = "max_completion_tokens",
     thinking = { dialect = "standard" },

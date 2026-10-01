@@ -41,11 +41,12 @@ pub fn strip_provider_keys(cmd: &mut Command) -> &mut Command {
     cmd
 }
 
-/// A builtin slug ignores `api_key_env` in `providers.toml`, so that var is
-/// not a key maki reads. Its `headers` are still sent, so their `${VAR}`s count.
+/// A known slug, built in or declared by a plugin, ignores `api_key_env` in
+/// `providers.toml`, so that var is not a key maki reads. Its `headers` are
+/// still sent, so their `${VAR}`s count.
 fn provider_key_vars(config: &ProvidersConfig, catalog_vars: Vec<String>) -> Vec<String> {
-    let builtin = ProviderRegistry::builtins()
-        .iter()
+    let known = ProviderRegistry::all()
+        .into_iter()
         .map(|spec| spec.api_key_env)
         .chain(copilot_auth::TOKEN_ENV_VARS.iter().copied())
         .chain([bedrock::BEARER_TOKEN_ENV])
@@ -62,7 +63,7 @@ fn provider_key_vars(config: &ProvidersConfig, catalog_vars: Vec<String>) -> Vec
         .flat_map(|def| def.headers.values())
         .flat_map(|value| env_var_refs(value))
         .map(str::to_owned);
-    builtin
+    known
         .chain(custom)
         .chain(header_refs)
         .chain(catalog_vars)

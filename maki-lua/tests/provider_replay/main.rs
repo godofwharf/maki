@@ -1,4 +1,4 @@
-//! The bundled provider plugins: which built-in rows they claim, the recorded
+//! The bundled provider plugins: the slugs they declare, the recorded
 //! exchanges each one replays, and the declared data a route onto the slug
 //! has to honour too.
 //!
@@ -11,10 +11,10 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use maki_agent::tools::ToolRegistry;
+use maki_config::providers::builtin_provider;
 use maki_config::{PROVIDER_BUILTINS, PluginsConfig};
 use maki_lua::PluginHost;
 use maki_providers::plugin;
-use maki_providers::spec::{Build, ProviderRegistry};
 use maki_providers::{Model, ResolvedAuth, ThinkingSupport, Timeouts};
 use tempfile::TempDir;
 use test_case::test_case;
@@ -22,6 +22,8 @@ use test_case::test_case;
 mod golden;
 
 const MISTRAL: &str = "mistral";
+const DEEPSEEK: &str = "deepseek";
+const PUBLISHED_PEAK_HOURS: &str = "2x during 01:00-04:00, 06:00-10:00 UTC, Mon-Fri";
 const MISTRAL_KEY_ENV: &str = "MISTRAL_API_KEY";
 const MISTRAL_KEY: &str = "sk-test";
 const MINISTRAL: &str = "ministral-14b-latest";
@@ -38,8 +40,10 @@ const HOME_VARS: &[&str] = &[
 const HOST_FAILED: &str = "the plugin host did not start";
 const LOAD_FAILED: &str = "the bundled provider plugin did not load";
 const TEMPDIR_FAILED: &str = "no temporary state directory";
-const NOT_A_PROVIDER_BUILTIN: &str = "a bundled provider plugin is missing from PROVIDER_BUILTINS";
-const UNCLAIMED_ROW: &str = "no bundled plugin claims a declared row, so nothing builds it";
+const UNDECLARED_SLUG: &str =
+    "a bundled provider plugin did not declare the slug it is named after";
+const NOT_LISTED_FOR_LOGIN: &str = "a bundled provider plugin is missing from maki auth login";
+const NO_SCHEDULE: &str = "deepseek bills by the clock";
 const UNKNOWN_MODEL: &str = "the model spec did not resolve";
 const NOT_BUILT: &str = "mistral did not build from its declaration";
 
@@ -73,26 +77,38 @@ fn load_bundled(slug: &str) -> PluginHost {
     host
 }
 
-/// A declared row has no constructor of its own: the bundled plugin of the
-/// same name claiming it is the only thing that builds it. Each plugin loads
-/// alone, so the slug is provably its own and not a neighbour's.
+/// [`PROVIDER_BUILTINS`] is what keeps third parties off a bundled slug, so it
+/// only protects a provider if the plugin of that name really declares it.
+/// Each one loads alone, so a neighbour can never answer for it.
 #[test]
-fn every_declared_row_is_claimed_by_its_bundled_plugin() {
+fn every_provider_builtin_declares_its_own_slug() {
     let _state = isolated_state();
-    let declared = ProviderRegistry::builtins()
-        .iter()
-        .filter(|spec| matches!(spec.build, Build::Declared))
-        .map(|spec| spec.slug);
-    for slug in declared {
-        assert!(
-            PROVIDER_BUILTINS.contains(&slug),
-            "{NOT_A_PROVIDER_BUILTIN}: {slug}"
-        );
+    for &slug in PROVIDER_BUILTINS {
         plugin::begin_load();
         let _host = load_bundled(slug);
         plugin::commit_load();
-        assert!(plugin::is_registered(slug), "{UNCLAIMED_ROW}: {slug}");
+        assert!(plugin::is_registered(slug), "{UNDECLARED_SLUG}: {slug}");
+        assert!(
+            builtin_provider(slug).is_some(),
+            "{NOT_LISTED_FOR_LOGIN}: {slug}"
+        );
     }
+}
+
+/// The hours, days and surcharge exactly as DeepSeek's pricing page lists
+/// them. A lost schedule would not fail anything else. Every turn would just
+/// quietly bill at the off-peak rate.
+#[test]
+fn deepseek_bills_the_published_peak_hours() {
+    let _state = isolated_state();
+    plugin::begin_load();
+    let _host = load_bundled(DEEPSEEK);
+    plugin::commit_load();
+
+    let schedule = plugin::spec(DEEPSEEK)
+        .and_then(|spec| spec.pricing_schedule)
+        .expect(NO_SCHEDULE);
+    assert_eq!(schedule.to_string(), PUBLISHED_PEAK_HOURS);
 }
 
 fn mistral_model(model_id: &str) -> Model {

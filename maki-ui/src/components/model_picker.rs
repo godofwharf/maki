@@ -702,14 +702,14 @@ mod tests {
         }
     }
 
-    const OX_SPEC: &str = "openrouter/stealth/ox-alpha";
+    const OX_SPEC: &str = "ollama/stealth/ox-alpha";
     const PAID_ID: &str = "vendor/paid-model";
     const PAID_PRICING: ModelPricing = ModelPricing::per_million(3.0, 15.0, 0.0, 0.0);
     const PAID_PRICE_LABEL: &str = "  $3.00/$15.00 ";
 
-    fn register_openrouter_models() {
+    fn register_discovered_models() {
         model_registry::set_known_models(
-            "openrouter",
+            "ollama",
             vec![
                 discovered("stealth/ox-alpha", ModelPricing::ZERO),
                 discovered(PAID_ID, PAID_PRICING),
@@ -719,7 +719,7 @@ mod tests {
 
     #[test]
     fn zero_priced_discovery_marks_entry_free() {
-        register_openrouter_models();
+        register_discovered_models();
         let entry = parse_model_entry(OX_SPEC).unwrap();
         assert!(
             entry.detail.starts_with(FREE_PREFIX),
@@ -729,8 +729,8 @@ mod tests {
 
     #[test]
     fn paid_discovery_not_marked_free() {
-        register_openrouter_models();
-        let entry = parse_model_entry(&format!("openrouter/{PAID_ID}")).unwrap();
+        register_discovered_models();
+        let entry = parse_model_entry(&format!("ollama/{PAID_ID}")).unwrap();
         assert!(
             !entry.detail.starts_with(FREE_PREFIX),
             "paid discovery must not mark the entry free"
@@ -745,10 +745,10 @@ mod tests {
 
     #[test]
     fn free_models_sort_before_paid_within_a_provider() {
-        register_openrouter_models();
+        register_discovered_models();
         let models = Arc::new(ArcSwapOption::empty());
         models.store(Some(loaded(vec![
-            format!("openrouter/{PAID_ID}"),
+            format!("ollama/{PAID_ID}"),
             OX_SPEC.into(),
         ])));
         let mut p = ModelPicker::new(models);

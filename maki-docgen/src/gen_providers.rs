@@ -3,6 +3,8 @@ use maki_providers::model::{ModelEntry, ModelTier};
 use maki_providers::spec::{AuthDoc, BASES, CatalogDoc, ProviderRegistry, ProviderSpec};
 use std::fmt::Write;
 
+use crate::lua_util::with_bundled_providers;
+
 const FRONT_MATTER: &str = r#"+++
 title = "Providers"
 weight = 5
@@ -101,9 +103,7 @@ fn providers_toml_section() -> String {
         // Prefer a non-default plan key in the example when one exists.
         let example_key = plans
             .iter()
-            .find(|(_, p)| {
-                p.base_url != b.default_base_url || p.default_model != Some(b.default_model)
-            })
+            .find(|(_, p)| p.base_url != b.default_base_url || p.default_model != b.default_model)
             .unwrap_or(&plans[0])
             .0;
         let _ = writeln!(plan_examples, "[{}]", b.slug);
@@ -310,7 +310,9 @@ Set exactly one of the two. `codec` picks the wire format the API speaks:
 
 `base` borrows a built-in provider's whole adapter, quirks included, such as Ollama's thinking field or Copilot's endpoint routing. Use it when porting a provider script that set `base`, or when no codec fits. A base changes whenever that provider does, so prefer a codec. Valid values: {}.
 
-Without a `models` table, the provider uses the catalog of its codec or base.
+Without a `models` table, a `base` provider uses that provider's catalog, and a `codec` provider lists only what `list_models` finds.
+
+`family`, `accepts_arbitrary_models`, `max_output_tokens` and `context_window` describe a model no row covers. Each defaults to the provider behind the codec or base, so a provider speaking `codec = "openai"` should set `family = "generic"` unless it serves GPT models. The two limits also fill in every row that leaves its own out, and `max_output_tokens = false` says the provider publishes no cap.
 
 ### Model rows
 
@@ -322,14 +324,16 @@ A row matches every model id that starts with one of its `prefixes`, and the lon
 |-------|------|---------|-------|
 | `prefixes` | list of strings | required | The first is the canonical id |
 | `tier` | string | `medium` | `weak`, `medium`, `strong`, or `compaction` |
-| `context_window` | number | 128000 | Tokens of context |
-| `max_output_tokens` | number | 16384 | Max completion tokens |
+| `context_window` | number | provider's | Tokens of context |
+| `max_output_tokens` | number | provider's | Max completion tokens |
 | `supports_thinking` | bool | unset | |
 | `requires_thinking` | bool | `false` | For APIs that reject a request with thinking off. Implies `supports_thinking` and raises thinking to minimal effort when off |
 | `supports_vision` | bool | unset | When false, image input and `view_image` are off for this model |
 | `supports_tool_examples` | bool | unset | |
 | `pricing` | table | unset | `input`, `output`, `cache_write`, `cache_read`, in dollars per 1M tokens |
 | `thinking_fields` | table | unset | How this model spells each thinking mode on the wire |
+| `family` | string | provider's | `generic`, `claude`, `gpt`, `gemini`, `glm` or `synthetic` |
+| `default` | bool | first row of its tier | The model its tier starts on. At most one per tier |
 
 An unset `supports_*` flag uses the codec or base provider's answer, and `false` turns the feature off for that model.
 
@@ -353,7 +357,7 @@ Each hook gets a [`ctx`](/docs/lua-api/#maki-provider-register) table first, wit
 
 Credentials resolve on the first request. A provider with missing or expired credentials stays in the picker and fails when you send a message, like a built-in provider with no API key.
 
-Defining `login` lists the provider in `maki auth login`. Without it, the slug is an API-key provider.
+Defining `login` lists the provider in `maki auth login` and runs it there. Without it, a provider with `api_key_env` is listed instead, and login asks for a key, opening `login_url` first and offering any `plans`.
 
 `map_error` can change the status and message of an API error, for example to turn an opaque vendor error into advice. Retries follow the new status, and `retry-after` still comes from the server.
 
@@ -374,7 +378,7 @@ The value is any JSON object. Each slug gets its own file at `~/.local/state/mak
 ### Slug rules
 
 - Starts with a letter or digit, then only letters, digits, `_` and `-`
-- Not a built-in slug, because the plugin would inherit the API key you set for the built-in. Plugins bundled with Maki are the exception
+- Not a slug Maki ships, built in or as a bundled plugin, because the plugin would be handed the API key you saved for it. Only the bundled plugin may declare its own slug
 - Not a slug from `providers.toml` or another plugin
 
 ### Migrating from provider scripts
@@ -564,7 +568,13 @@ fn write_section(out: &mut String, spec: &ProviderSpec) {
     }
 }
 
+/// Bundled provider plugins only exist once Lua has loaded them, so the page
+/// is rendered while they are loaded.
 pub fn generate() -> String {
+    with_bundled_providers(render)
+}
+
+fn render() -> String {
     let mut out = String::with_capacity(4096);
 
     let _ = writeln!(out, "{FRONT_MATTER}\n");
@@ -581,8 +591,8 @@ pub fn generate() -> String {
     let _ = writeln!(out, "{BASE_URL_OVERRIDES}\n");
     let _ = writeln!(out, "## Built-in Providers\n");
 
-    // `BUILTINS` order is the documentation order, stated on the array.
-    for spec in ProviderRegistry::builtins() {
+    // `BUILTINS` order, stated on the array, then the bundled plugins by slug.
+    for spec in ProviderRegistry::all() {
         write_section(&mut out, spec);
         let _ = writeln!(out);
     }

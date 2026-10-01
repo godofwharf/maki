@@ -1846,11 +1846,11 @@ mod tests {
     }
 
     fn anthropic_spec() -> &'static crate::spec::ProviderSpec {
-        crate::spec::ProviderRegistry::get("anthropic").unwrap()
+        crate::spec::ProviderRegistry::compiled("anthropic").unwrap()
     }
 
     fn google_spec() -> &'static crate::spec::ProviderSpec {
-        crate::spec::ProviderRegistry::get("google").unwrap()
+        crate::spec::ProviderRegistry::compiled("google").unwrap()
     }
 
     fn clamp_test_model(spec: &'static crate::spec::ProviderSpec) -> crate::model::Model {

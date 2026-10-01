@@ -648,7 +648,37 @@ fn owned(slugs: &OwnedSlugs, slug: &str) -> LuaResult<()> {
 ///   `api_key_env` (string) Env var holding the API key, re-read each time
 ///           the provider is built. Sent as `x-api-key` for anthropic,
 ///           `x-goog-api-key` for google, and a bearer token otherwise.
-///           Needs the `env` permission.
+///           Also lists the provider in `maki auth login`, which saves a key
+///           it reads the same way. Needs the `env` permission.
+///   `default_model` (string) Model id, without the slug, saved after
+///           `maki auth login`.
+///   `login_url` (string) Page `maki auth login` opens to get a key.
+///   `plans` (table) Plans `maki auth login` offers, each
+///           `{ key = ..., display_name = ..., base_url = ...,
+///           default_model = ..., login_url = ... }`. Only `key` and
+///           `display_name` are required, `base_url` defaults to the
+///           provider's and must match `net_hosts` too. Picked with `plan` in
+///           `providers.toml`.
+///   `family` (string) How models no row describes behave: `"generic"`,
+///           `"claude"`, `"gpt"`, `"gemini"`, `"glm"` or `"synthetic"`.
+///           Defaults to the native provider behind `codec` or `base`, as do
+///           the next three.
+///   `accepts_arbitrary_models` (boolean) Let discovery assign tiers to
+///           listed models instead of keeping the `models` defaults.
+///   `max_output_tokens` (integer|false) Output cap of any model whose row
+///           leaves it out, or no row describes. `false` when the provider
+///           publishes none.
+///   `context_window` (integer) Context window of any model whose row leaves
+///           it out, or no row describes.
+///   `pricing_schedule` (table) For rates that move with the clock:
+///           `{ windows = { { start, end }, ... }, multiplier = ...,
+///           weekdays_only = ... }`. Windows are UTC hours, `end` exclusive,
+///           and the model rows quote the rates outside them.
+///   `aperture` (table) `{ path_prefix = "/v1" }` lets Aperture route the
+///           gateway's models of this slug through this provider.
+///   `docs` (table) `{ features = ..., discovery_note = ... }` for the
+///           generated provider docs. `discovery_note` stands in for the model
+///           table when `models` is empty.
 ///   `system_prefix` (string) Text prepended to the system prompt. The
 ///           `google` codec refuses it.
 ///   `openai` (table) Options for `codec = "openai"`, all optional:
@@ -676,7 +706,8 @@ fn owned(slugs: &OwnedSlugs, slug: &str) -> LuaResult<()> {
 ///     `thinking_overrides` (table) Model id prefix to `"no"`, `"yes"` or
 ///             `"required"`, overriding the model table. Longest prefix wins.
 ///   `models` (table) Static model rows, read once at registration. See
-///            [model rows](/docs/providers/#model-rows).
+///            [model rows](/docs/providers/#model-rows). A tier with no row
+///            marked `default` defaults to its first one.
 ///   `auth` (function) `function(ctx, purpose)` returning
 ///            `{ base_url = ..., headers = { ... } }`. `purpose` is
 ///            `"resolve"` before the first request, `"refresh"` after a 401,
@@ -1340,7 +1371,9 @@ mod tests {
     fn decode_spec(fields: &str) -> LuaResult<(HashMap<HookSlot, RegistryKey>, ProviderDecl)> {
         let lua = Lua::new();
         let spec: Table = lua
-            .load(format!(r#"return {{ slug = "{SLUG_NAME}", {fields} }}"#))
+            .load(format!(
+                r#"return {{ slug = "{SLUG_NAME}", display_name = "{SLUG_NAME}", {fields} }}"#
+            ))
             .eval()?;
         declaration(&lua, &spec)
     }
