@@ -720,9 +720,9 @@ fn messages_body(
     let mut body = json!({
         "model": model.id,
         "max_tokens": model.output_tokens().unwrap_or(shared::FALLBACK_MAX_TOKENS),
-        "system": [{"type": "text", "text": system}],
-        "messages": shared::wire_messages(messages, tools),
-        "tools": tools,
+        "system": [{"type": "text", "text": system, "cache_control": Some(shared::EPHEMERAL)}],
+        "messages": shared::build_wire_messages(messages, tools),
+        "tools": shared::build_wire_tools(tools),
         "stream": true,
     });
     thinking.apply_to_body(&mut body, model);
@@ -1088,7 +1088,49 @@ mod tests {
 
         assert_eq!(
             body["messages"],
-            json!([{"role": "assistant", "content": [{"type": "text", "text": REPLY}]}])
+            json!([{"role": "assistant", "content": [{"type": "text", "text": REPLY, "cache_control": {"type": "ephemeral"}}]}])
+        );
+    }
+
+    #[test]
+    fn messages_body_marks_system_tools_and_recent_messages_for_cache() {
+        let model = Model::from_spec(CLAUDE_SPEC).unwrap();
+        let messages = vec![
+            Message::user("first".into()),
+            Message {
+                role: Role::Assistant,
+                content: vec![ContentBlock::Text {
+                    text: "reply".into(),
+                }],
+                ..Default::default()
+            },
+            Message::user("latest".into()),
+        ];
+        let tools =
+            json!([{"name": "tool", "description": "test", "input_schema": {"type": "object"}}]);
+
+        let body = messages_body(&model, &messages, "system", &tools, ThinkingConfig::Off);
+
+        assert_eq!(
+            body["system"][0]["cache_control"],
+            json!({"type": "ephemeral"})
+        );
+        assert_eq!(
+            body["tools"][0]["cache_control"],
+            json!({"type": "ephemeral"})
+        );
+        assert!(
+            body["messages"][0]["content"][0]
+                .get("cache_control")
+                .is_none()
+        );
+        assert_eq!(
+            body["messages"][1]["content"][0]["cache_control"],
+            json!({"type": "ephemeral"})
+        );
+        assert_eq!(
+            body["messages"][2]["content"][0]["cache_control"],
+            json!({"type": "ephemeral"})
         );
     }
 
