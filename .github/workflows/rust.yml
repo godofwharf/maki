@@ -83,6 +83,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       OPENSSL_NO_VENDOR: 1
+      NEXTEST_PROFILE: ci
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
