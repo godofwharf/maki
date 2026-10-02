@@ -292,7 +292,7 @@ pub(crate) fn wire_messages<'a>(messages: &'a [Message], tools: &Value) -> Vec<W
         .collect()
 }
 
-pub(crate) fn build_wire_messages<'a>(
+pub(super) fn build_wire_messages<'a>(
     messages: &'a [Message],
     tools: &Value,
 ) -> Vec<WireMessage<'a>> {
@@ -312,7 +312,7 @@ pub(crate) fn build_wire_messages<'a>(
 
 /// A deferred definition is not in the cached prefix and may not carry a
 /// breakpoint, so it goes on the last one that is.
-pub(crate) fn build_wire_tools(tools: &Value) -> Value {
+pub(super) fn build_wire_tools(tools: &Value) -> Value {
     let Some(arr) = tools.as_array() else {
         return tools.clone();
     };

@@ -717,15 +717,15 @@ fn messages_body(
     tools: &Value,
     thinking: ThinkingConfig,
 ) -> Value {
-    let mut body = json!({
-        "model": model.id,
-        "max_tokens": model.output_tokens().unwrap_or(shared::FALLBACK_MAX_TOKENS),
-        "system": [{"type": "text", "text": system, "cache_control": Some(shared::EPHEMERAL)}],
-        "messages": shared::build_wire_messages(messages, tools),
-        "tools": shared::build_wire_tools(tools),
-        "stream": true,
-    });
-    thinking.apply_to_body(&mut body, model);
+    let system = [shared::SystemBlock {
+        r#type: "text",
+        text: system,
+        cache_control: Some(shared::EPHEMERAL),
+    }];
+    let mut body =
+        shared::build_request_body_with_system(model, messages, &system, tools, thinking, None);
+    body["model"] = json!(model.id);
+    body["stream"] = json!(true);
     body
 }
 
