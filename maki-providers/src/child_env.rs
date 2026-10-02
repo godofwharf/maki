@@ -142,12 +142,14 @@ mod tests {
     fn child_sees_only_keys_set_after_strip() {
         let inherited = anthropic::SPEC.api_key_env;
         let explicit = bedrock::BEARER_TOKEN_ENV;
-        let mut cmd = Command::new("printenv");
-        cmd.args([inherited, explicit]).env(inherited, SECRET);
+        let mut cmd = Command::new("env");
+        cmd.env(inherited, SECRET);
         let output = strip_provider_keys(&mut cmd)
             .env(explicit, SECRET)
             .output()
             .unwrap();
-        assert_eq!(output.stdout, format!("{SECRET}\n").as_bytes());
+        let env = String::from_utf8(output.stdout).unwrap();
+        assert!(!env.contains(&format!("{inherited}=")));
+        assert!(env.contains(&format!("{explicit}={SECRET}")));
     }
 }
